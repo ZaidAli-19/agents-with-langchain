@@ -7,7 +7,12 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
-from learning_companion.chain import ConfigurationError, build_chain
+from learning_companion.chain import (
+    ConfigurationError,
+    build_chain,
+    prompt_messages,
+    prompt_roles,
+)
 from learning_companion.config import get_settings
 
 app = FastAPI(title="Learning Companion Chatbot")
@@ -41,6 +46,11 @@ def _chunk(completion_id: str, model: str, delta: dict, finish: str | None) -> s
     return f"data: {json.dumps(payload)}\n\n"
 
 
+def _dev_print(title: str, data) -> None:
+    """Development only: pretty-print to the terminal. Never includes the API key."""
+    print(f"\n===== {title} =====\n{json.dumps(data, indent=2, ensure_ascii=False)}", flush=True)
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
@@ -55,13 +65,23 @@ def list_models():
 
 @app.post("/v1/chat/completions")
 def chat_completions(request: ChatRequest):
+    settings = get_settings()
     try:
-        chain = build_chain(get_settings())
+        chain = build_chain(settings)
     except ConfigurationError as exc:
         return _error(str(exc), 500, "configuration_error")
 
+    # Only the latest user message is used. Request `system` messages are never placed in the
+    # application's system slot; history is added in Story 2.2.
     user_messages = [m.content for m in request.messages if m.role == "user"]
     question = user_messages[-1] if user_messages else ""
+    dev = settings.app_env == "development"
+    if dev:
+        _dev_print("REQUEST (from Open WebUI)", request.model_dump())
+        _dev_print(
+            f"PROMPT SENT TO MODEL ({len(prompt_roles(question))} messages)",
+            prompt_messages(question),
+        )
     completion_id = f"chatcmpl-{uuid.uuid4().hex}"
 
     if not request.stream:
@@ -69,6 +89,8 @@ def chat_completions(request: ChatRequest):
             text = chain.invoke({"question": question})
         except Exception as exc:  # noqa: BLE001
             return _error(f"Model call failed: {exc}", 502, "upstream_error")
+        if dev:
+            _dev_print("RESPONSE", {"role": "assistant", "content": text})
         return {
             "id": completion_id,
             "object": "chat.completion",
@@ -85,10 +107,14 @@ def chat_completions(request: ChatRequest):
 
     def events():
         yield _chunk(completion_id, request.model, {"role": "assistant"}, None)
+        pieces: list[str] = []
         try:
             for piece in chain.stream({"question": question}):
                 if piece:
+                    pieces.append(piece)
                     yield _chunk(completion_id, request.model, {"content": piece}, None)
+            if dev:
+                _dev_print("RESPONSE (streamed)", {"role": "assistant", "content": "".join(pieces)})
         except Exception as exc:  # noqa: BLE001
             yield _chunk(
                 completion_id, request.model, {"content": f"[Model call failed: {exc}]"}, None

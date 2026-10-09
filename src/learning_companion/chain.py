@@ -1,5 +1,6 @@
+from langchain_core.messages import SystemMessage
 from langchain_core.output_parsers import StrOutputParser
-from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate, HumanMessagePromptTemplate
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 from learning_companion.config import Settings
@@ -14,15 +15,36 @@ class ConfigurationError(Exception):
     pass
 
 
+def build_prompt() -> ChatPromptTemplate:
+    """Two separate parts: the app-owned system instruction and the current user message."""
+    return ChatPromptTemplate.from_messages(
+        [
+            SystemMessage(content=LEARNING_COMPANION_INSTRUCTION),
+            HumanMessagePromptTemplate.from_template("{question}"),
+        ]
+    )
+
+
+def prompt_messages(question: str) -> list[dict[str, str]]:
+    """The exact role/content messages sent to the model (development printing only)."""
+    return [
+        {"role": m.type, "content": m.content}
+        for m in build_prompt().format_messages(question=question)
+    ]
+
+
+def prompt_roles(question: str) -> list[str]:
+    """Ordered message roles the prompt produces (no message text), for dev logging."""
+    return [message.type for message in build_prompt().format_messages(question=question)]
+
+
 def build_chain(settings: Settings):
     """Prompt -> Gemini chat model -> text output."""
     if not settings.gemini_api_key:
         raise ConfigurationError("GEMINI_API_KEY is not set. Add it to your untracked .env file.")
     if not settings.gemini_model_name:
         raise ConfigurationError("GEMINI_MODEL_NAME is not set. Ask your instructor for the name.")
-    prompt = ChatPromptTemplate.from_messages(
-        [("system", LEARNING_COMPANION_INSTRUCTION), ("human", "{question}")]
-    )
+    prompt = build_prompt()
     model = ChatGoogleGenerativeAI(
         model=settings.gemini_model_name,
         google_api_key=settings.gemini_api_key,
