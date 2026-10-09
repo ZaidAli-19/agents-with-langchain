@@ -59,9 +59,18 @@ Settings: `APP_ENV`, `GEMINI_API_KEY`, `GEMINI_MODEL_NAME`, `HOST`, `PORT`. The 
 | Behaviour | Where | Responsibility | Used by |
 | --- | --- | --- | --- |
 | General chat | `build_chain` | Friendly Learning Companion for greetings and ordinary conversation | Open WebUI endpoint (unchanged) |
-| Study helper | `build_study_helper_chain` | Plain-language beginner explanation, a small example where useful, one next step | Local dev command only |
+| Study helper | `build_study_helper_chain` | Plain-language beginner explanation, a small example where useful, one next step | Open WebUI endpoint for `/study` messages; also the local dev command |
 
 Both use the same configured model, the same request-provided history shape, the same OpenAI-compatible endpoint, and the same Open WebUI chat. Story 3.1 creates the study-helper capability only (try it with `uv run python -m learning_companion.study_dev "What is an API?"`); selecting between the chains is Story 3.2.
+
+## Routing (Story 3.2)
+
+`Open WebUI request → split history/question → select_route → chosen chain → existing JSON or SSE adapter`
+
+- Rule (`select_route()` in `chain.py`): if the latest user message begins with `/study` followed by text, use the study-helper chain with the leading marker removed; otherwise use the general-chat chain. `/studying`, a bare `/study`, and a `/study` later in the text stay general.
+- History handling is unchanged (Story 2.2); earlier messages are not rewritten.
+- Each answer starts with a plain-text label, `[Route: general]` or `[Route: study]`. Response fields and shapes are unchanged. In development the log line also shows `route: general|study`.
+- Boundary: this is deterministic application routing, not LLM classification, LangGraph, or multi-agent orchestration. Story 4.1 replaces the `if/else` with an explicit LangGraph route.
 
 ## No-persistence boundary
 

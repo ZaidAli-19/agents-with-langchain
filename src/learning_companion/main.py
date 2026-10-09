@@ -11,7 +11,9 @@ from learning_companion.chain import (
     MAX_HISTORY_MESSAGES,
     ConfigurationError,
     build_chain,
+    build_study_helper_chain,
     prompt_roles,
+    select_route,
     split_conversation,
 )
 from learning_companion.config import get_settings
@@ -67,21 +69,32 @@ def list_models():
 @app.post("/v1/chat/completions")
 def chat_completions(request: ChatRequest):
     settings = get_settings()
+    # History comes only from this request; `system` messages are never used.
+    history, question = split_conversation(request.messages)
+    # Visible routing rule: "/study ..." -> study helper, everything else -> general chat.
+    route, question = select_route(question)
     try:
-        chain = build_chain(settings)
+        chain = build_study_helper_chain(settings) if route == "study" else build_chain(settings)
     except ConfigurationError as exc:
         return _error(str(exc), 500, "configuration_error")
 
-    # History comes only from this request; `system` messages are never used.
-    history, question = split_conversation(request.messages)
+    label = f"[Route: {route}]\n\n"
     chain_input = {"history": history, "question": question}
     dev = settings.app_env == "development"
     if dev:
         print(
-            f"history: {len(history)} of {MAX_HISTORY_MESSAGES} max; "
+            f"route: {route}; history: {len(history)} of {MAX_HISTORY_MESSAGES} max; "
             f"prompt roles: {prompt_roles(history, question)}; "
             f"request messages: {len(request.messages)}",
             flush=True,
+        )
+        _dev_print(
+            "REQUEST",
+            {
+                "route": route,
+                "question": question,
+                "history": [{"role": m.type, "content": m.content} for m in history],
+            },
         )
     completion_id = f"chatcmpl-{uuid.uuid4().hex}"
 
@@ -90,6 +103,7 @@ def chat_completions(request: ChatRequest):
             text = chain.invoke(chain_input)
         except Exception as exc:  # noqa: BLE001
             return _error(f"Model call failed: {exc}", 502, "upstream_error")
+        text = label + text
         if dev:
             _dev_print("RESPONSE", {"role": "assistant", "content": text})
         return {
@@ -108,7 +122,8 @@ def chat_completions(request: ChatRequest):
 
     def events():
         yield _chunk(completion_id, request.model, {"role": "assistant"}, None)
-        pieces: list[str] = []
+        pieces: list[str] = [label]
+        yield _chunk(completion_id, request.model, {"content": label}, None)
         try:
             for piece in chain.stream(chain_input):
                 if piece:

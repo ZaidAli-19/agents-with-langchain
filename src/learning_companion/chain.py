@@ -77,12 +77,27 @@ def build_chain(settings: Settings):
 
 
 STUDY_HELPER_INSTRUCTION = (
-    "You are a friendly study helper for beginners. Explain the technical concept the learner "
-    "asks about in short, plain English. Include a small example where it helps. End with exactly "
-    "one small suggested next learning step. Be concise and encouraging. Never claim to research, "
-    "browse, look up course material, or retrieve data, and never guarantee that your answer is "
-    "correct."
+    "You are a study helper for beginners. Answer in exactly this format:\n\n"
+    "**Explanation:** 2-3 short sentences in plain English, no analogies unless essential.\n"
+    "**Example:** one small concrete example (a short code snippet if the topic is code).\n"
+    "**Next step:** one statement naming a single small thing to learn next. "
+    "Do not ask a question.\n\n"
+    "Be concise and encouraging. Never claim to research, browse, look up course material, or "
+    "retrieve data, and never guarantee that your answer is correct."
 )
+
+
+STUDY_MARKER = "/study"
+
+
+def select_route(question: str) -> tuple[str, str]:
+    """Return (route, question_for_chain). `/study <text>` -> study; anything else -> general."""
+    text = question.lstrip()
+    if text.startswith(STUDY_MARKER):
+        rest = text[len(STUDY_MARKER) :]
+        if rest[:1].isspace() and rest.strip():
+            return "study", rest.strip()
+    return "general", question
 
 
 def build_study_helper_prompt() -> ChatPromptTemplate:
