@@ -44,15 +44,16 @@ Settings: `APP_ENV`, `GEMINI_API_KEY`, `GEMINI_MODEL_NAME`, `HOST`, `PORT`. The 
 - Application instructions stay separate from user messages.
 - Out of scope: authentication, authorization, security hardening, databases, persistent memory, RAG, production deployment, extensive tests, tool calls, LangGraph, agents, MCP.
 
-## Message flow (Story 2.1)
+## Message flow (Story 2.2)
 
-`Open WebUI request → latest user message → [system: application instruction][human: user message] → Gemini model → text output → OpenAI-compatible JSON or SSE`
+`Open WebUI request → earlier user/assistant messages (last 10) + latest user message → [system: application instruction][history][human: latest question] → Gemini model → text output → OpenAI-compatible JSON or SSE`
 
-- The prompt is a LangChain chat prompt (`build_prompt()` in `chain.py`) with a fixed system message owned by the application and one human message.
+- The prompt is a LangChain chat prompt (`build_prompt()` in `chain.py`): a fixed system message owned by the application, a `MessagesPlaceholder("history")`, then the human message.
+- History is the supported prior `user` and `assistant` messages from the current request, in original order, limited to `MAX_HISTORY_MESSAGES = 10`.
 - The same chain serves normal (`invoke`) and streaming (`stream`) requests.
-- A request-supplied `system` message is treated as user content and never replaces the application instruction; it is ignored in this story.
-- In development (`APP_ENV=development`) one log line shows prompt message roles and counts, never keys or message text.
+- A request-supplied `system` message never replaces the application instruction and is not used as history. Unsupported or empty content is ignored.
+- In development (`APP_ENV=development`) one log line shows history count, prompt roles, and request message count, never keys, the instruction, or message text.
 
 ## No-persistence boundary
 
-The application keeps nothing between requests: no history, database, or memory. Only the latest user message is used. Story 2.2 adds conversation history from the request's earlier messages.
+History comes only from the current Open WebUI request. The application saves nothing after a request ends: no database, cross-session or persistent memory.

@@ -1,6 +1,10 @@
-from langchain_core.messages import SystemMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_core.output_parsers import StrOutputParser
-from langchain_core.prompts import ChatPromptTemplate, HumanMessagePromptTemplate
+from langchain_core.prompts import (
+    ChatPromptTemplate,
+    HumanMessagePromptTemplate,
+    MessagesPlaceholder,
+)
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 from learning_companion.config import Settings
@@ -10,32 +14,52 @@ LEARNING_COMPANION_INSTRUCTION = (
     "and encourage the learner to keep going."
 )
 
+# Most recent earlier messages (user + assistant) taken from the current request. Nothing is stored.
+MAX_HISTORY_MESSAGES = 10
+
 
 class ConfigurationError(Exception):
     pass
 
 
 def build_prompt() -> ChatPromptTemplate:
-    """Two separate parts: the app-owned system instruction and the current user message."""
+    """App-owned system instruction, request-provided history, then the current user message."""
     return ChatPromptTemplate.from_messages(
         [
             SystemMessage(content=LEARNING_COMPANION_INSTRUCTION),
+            MessagesPlaceholder("history"),
             HumanMessagePromptTemplate.from_template("{question}"),
         ]
     )
 
 
-def prompt_messages(question: str) -> list[dict[str, str]]:
-    """The exact role/content messages sent to the model (development printing only)."""
-    return [
-        {"role": m.type, "content": m.content}
-        for m in build_prompt().format_messages(question=question)
+def split_conversation(messages) -> tuple[list[BaseMessage], str]:
+    """Return (history, question) from request messages.
+
+    The question is the latest user message with plain text. History is the supported user and
+    assistant messages before it, in order, limited to MAX_HISTORY_MESSAGES. `system` messages and
+    unsupported or empty content are ignored.
+    """
+    supported = [
+        (m.role, m.content)
+        for m in messages
+        if m.role in ("user", "assistant") and isinstance(m.content, str) and m.content.strip()
     ]
+    last_user = max((i for i, (role, _) in enumerate(supported) if role == "user"), default=None)
+    if last_user is None:
+        return [], ""
+    earlier = supported[:last_user][-MAX_HISTORY_MESSAGES:]
+    history = [
+        HumanMessage(content=text) if role == "user" else AIMessage(content=text)
+        for role, text in earlier
+    ]
+    return history, supported[last_user][1]
 
 
-def prompt_roles(question: str) -> list[str]:
+def prompt_roles(history: list[BaseMessage], question: str) -> list[str]:
     """Ordered message roles the prompt produces (no message text), for dev logging."""
-    return [message.type for message in build_prompt().format_messages(question=question)]
+    messages = build_prompt().format_messages(history=history, question=question)
+    return [message.type for message in messages]
 
 
 def build_chain(settings: Settings):

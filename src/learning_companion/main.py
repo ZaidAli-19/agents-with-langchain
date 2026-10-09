@@ -8,10 +8,11 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from learning_companion.chain import (
+    MAX_HISTORY_MESSAGES,
     ConfigurationError,
     build_chain,
-    prompt_messages,
     prompt_roles,
+    split_conversation,
 )
 from learning_companion.config import get_settings
 
@@ -20,7 +21,7 @@ app = FastAPI(title="Learning Companion Chatbot")
 
 class Message(BaseModel):
     role: Literal["system", "user", "assistant"]
-    content: str
+    content: str | list | None = None
 
 
 class ChatRequest(BaseModel):
@@ -71,22 +72,22 @@ def chat_completions(request: ChatRequest):
     except ConfigurationError as exc:
         return _error(str(exc), 500, "configuration_error")
 
-    # Only the latest user message is used. Request `system` messages are never placed in the
-    # application's system slot; history is added in Story 2.2.
-    user_messages = [m.content for m in request.messages if m.role == "user"]
-    question = user_messages[-1] if user_messages else ""
+    # History comes only from this request; `system` messages are never used.
+    history, question = split_conversation(request.messages)
+    chain_input = {"history": history, "question": question}
     dev = settings.app_env == "development"
     if dev:
-        _dev_print("REQUEST (from Open WebUI)", request.model_dump())
-        _dev_print(
-            f"PROMPT SENT TO MODEL ({len(prompt_roles(question))} messages)",
-            prompt_messages(question),
+        print(
+            f"history: {len(history)} of {MAX_HISTORY_MESSAGES} max; "
+            f"prompt roles: {prompt_roles(history, question)}; "
+            f"request messages: {len(request.messages)}",
+            flush=True,
         )
     completion_id = f"chatcmpl-{uuid.uuid4().hex}"
 
     if not request.stream:
         try:
-            text = chain.invoke({"question": question})
+            text = chain.invoke(chain_input)
         except Exception as exc:  # noqa: BLE001
             return _error(f"Model call failed: {exc}", 502, "upstream_error")
         if dev:
@@ -109,7 +110,7 @@ def chat_completions(request: ChatRequest):
         yield _chunk(completion_id, request.model, {"role": "assistant"}, None)
         pieces: list[str] = []
         try:
-            for piece in chain.stream({"question": question}):
+            for piece in chain.stream(chain_input):
                 if piece:
                     pieces.append(piece)
                     yield _chunk(completion_id, request.model, {"content": piece}, None)
