@@ -74,3 +74,37 @@ def build_chain(settings: Settings):
         google_api_key=settings.gemini_api_key,
     )
     return prompt | model | StrOutputParser()
+
+
+STUDY_HELPER_INSTRUCTION = (
+    "You are a friendly study helper for beginners. Explain the technical concept the learner "
+    "asks about in short, plain English. Include a small example where it helps. End with exactly "
+    "one small suggested next learning step. Be concise and encouraging. Never claim to research, "
+    "browse, look up course material, or retrieve data, and never guarantee that your answer is "
+    "correct."
+)
+
+
+def build_study_helper_prompt() -> ChatPromptTemplate:
+    """Study-helper system instruction, request-provided history, then the current question."""
+    return ChatPromptTemplate.from_messages(
+        [
+            SystemMessage(content=STUDY_HELPER_INSTRUCTION),
+            MessagesPlaceholder("history"),
+            HumanMessagePromptTemplate.from_template("{question}"),
+        ]
+    )
+
+
+def build_study_helper_chain(settings: Settings):
+    """Study-helper prompt -> Gemini chat model -> text output."""
+    if not settings.gemini_api_key:
+        raise ConfigurationError("GEMINI_API_KEY is not set. Add it to your untracked .env file.")
+    if not settings.gemini_model_name:
+        raise ConfigurationError("GEMINI_MODEL_NAME is not set. Ask your instructor for the name.")
+    prompt = build_study_helper_prompt()
+    model = ChatGoogleGenerativeAI(
+        model=settings.gemini_model_name,
+        google_api_key=settings.gemini_api_key,
+    )
+    return prompt | model | StrOutputParser()

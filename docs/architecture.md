@@ -29,7 +29,7 @@ Python 3.12, UV, FastAPI, Uvicorn, Pydantic settings, `langchain`, the Gemini La
 ## Planned layout
 
 ```
-src/learning_companion/   config.py, chain.py, main.py
+src/learning_companion/   config.py, chain.py, main.py, study_dev.py
 tests/
 .env.example  .gitignore  pyproject.toml  uv.lock  README.md
 ```
@@ -53,6 +53,15 @@ Settings: `APP_ENV`, `GEMINI_API_KEY`, `GEMINI_MODEL_NAME`, `HOST`, `PORT`. The 
 - The same chain serves normal (`invoke`) and streaming (`stream`) requests.
 - A request-supplied `system` message never replaces the application instruction and is not used as history. Unsupported or empty content is ignored.
 - In development (`APP_ENV=development`) one log line shows history count, prompt roles, and request message count, never keys, the instruction, or message text.
+
+## Chain behaviours
+
+| Behaviour | Where | Responsibility | Used by |
+| --- | --- | --- | --- |
+| General chat | `build_chain` | Friendly Learning Companion for greetings and ordinary conversation | Open WebUI endpoint (unchanged) |
+| Study helper | `build_study_helper_chain` | Plain-language beginner explanation, a small example where useful, one next step | Local dev command only |
+
+Both use the same configured model, the same request-provided history shape, the same OpenAI-compatible endpoint, and the same Open WebUI chat. Story 3.1 creates the study-helper capability only (try it with `uv run python -m learning_companion.study_dev "What is an API?"`); selecting between the chains is Story 3.2.
 
 ## No-persistence boundary
 
