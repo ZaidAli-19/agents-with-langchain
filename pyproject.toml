@@ -1,0 +1,26 @@
+[project]
+name = "learning-companion"
+version = "0.1.0"
+description = "Learning Companion Chatbot: an OpenAI-compatible API backed by LangChain and Gemini."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "pydantic-settings",
+    "langchain",
+    "langchain-google-genai",
+]
+
+[dependency-groups]
+dev = ["ruff", "pytest", "httpx"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/learning_companion"]
+
+[tool.ruff]
+line-length = 100
