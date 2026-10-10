@@ -60,6 +60,8 @@ Settings: `APP_ENV`, `GEMINI_API_KEY`, `GEMINI_MODEL_NAME`, `HOST`, `PORT`. The 
 | --- | --- | --- | --- |
 | General chat | `build_chain` | Friendly Learning Companion for greetings and ordinary conversation | General-chat graph node |
 | Study helper | `build_study_helper_chain` | Plain-language beginner explanation, a small example where useful, one next step | Study-helper graph node (`/study` messages); also the local dev command |
+| Reviewer | `build_reviewer_chain` | Judges a draft against the fixed rule for its route; structured `approve`/`improve` plus one short reason; never rewrites | Reviewer graph node |
+| Improver | `build_improver_chain` | Rewrites a draft once to fix the reviewer's stated problem; no research or tools | Improver graph node |
 
 Both use the same configured model, the same request-provided history shape, the same OpenAI-compatible endpoint, and the same Open WebUI chat. Story 3.1 creates the study-helper capability only (try it with `uv run python -m learning_companion.study_dev "What is an API?"`); selecting between the chains is Story 3.2.
 
@@ -73,6 +75,8 @@ Both use the same configured model, the same request-provided history shape, the
 - Boundary: this is deterministic application routing, not LLM classification, LangGraph, or multi-agent orchestration. Story 4.1 replaced the `if/else` in `main.py` with the LangGraph workflow below; `select_route()` is now called by the router node.
 
 ## Routing workflow (Story 4.1)
+
+This is the Story 4.1 graph. See **Bounded review (Story 4.2)** below for the current graph.
 
 `Open WebUI request → split history/question → graph → existing JSON or SSE adapter`
 
@@ -105,6 +109,50 @@ The two answer nodes are small specialist behaviours. An MCP or other tool call 
 **Output and trace:** the final answer and route label go through the unchanged JSON and SSE adapter (streaming uses LangGraph `stream_mode` messages, with the final answer sent as one chunk if no pieces stream). In development one line per node is printed, for example `graph: router -> study`, then `graph: study_helper -> answer 414 chars`. Lines contain no keys, instructions or message text.
 
 **Out of scope:** reviewer, improver, loops, retries (bounded review is Story 4.2), tools, MCP, RAG, web search, persistence, human approval, more agents.
+
+## Bounded review (Story 4.2)
+
+```
+START → router ──general──→ general_chat ─┐
+               └──study────→ study_helper ─┤
+                                           ▼
+                     ┌──────────────── reviewer ──approve──→ END
+                     │                     ▲
+                     └──improve (only when revision_count = 0)
+                              ▼            │
+                           improver ───────┘
+```
+
+**New nodes** (small LLM-powered specialists, sometimes called specialist agents; the router stays plain Python):
+
+- `reviewer`: judges the draft once against `REVIEW_RULES` for the route and writes `approve` or `improve` with one short reason. It never rewrites. If `revision_count` is 1 it makes no model call and accepts the draft. If the model call fails or is unusable it approves with the reason `review unavailable`, with no retry.
+- `improver`: rewrites the draft once using the reviewer's reason and adds 1 to `revision_count`. It makes no routing choice and uses no tools, research or new topics.
+
+**State changes** (`user_message`, `messages`, `route` unchanged):
+
+| Field | Meaning |
+| --- | --- |
+| `draft_answer` | Current unapproved reply (replaces `answer`); written by the answer nodes, replaced once by the improver |
+| `review_decision` | `approve` or `improve`; empty before the first review |
+| `review_reason` | One short sentence from the reviewer; the improver reads it |
+| `revision_count` | Improver rewrites so far; starts at 0 and can only reach 1 |
+| `final_answer` | Approved reply sent to Open WebUI; empty until approved or accepted |
+
+**Edge rules:** each answer node goes to `reviewer`; `approve` goes to `END`; `improve` goes to `improver` only while `revision_count` is 0; `improver` returns to `reviewer`; at `revision_count` 1 the reviewer accepts the draft and ends. A question therefore gets at most one draft, one improvement, then stops (up to three model calls: draft, review, improve; the second review makes none).
+
+**Streaming:** a draft may be replaced by the improver, so draft text is never streamed. The SSE stream (`stream_mode="updates"`) sends the route label, then `final_answer` as one content chunk, then the stop chunk and `[DONE]`. JSON replies use `final_answer` directly.
+
+**Trace** (development only; no keys, instructions or message text; reason capped at 120 characters):
+
+```
+graph: router -> study
+graph: study_helper -> draft 399 chars
+graph: reviewer -> improve (revision 0): <reason>
+graph: improver -> revision 1
+graph: reviewer -> approve (revision 1): revision limit reached
+```
+
+**Scope boundary:** no tools, MCP, RAG, web search, persistence, human approval, additional agents, or retries beyond the single improvement.
 
 ## No-persistence boundary
 

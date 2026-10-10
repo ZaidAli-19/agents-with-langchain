@@ -1,3 +1,5 @@
+from typing import Literal
+
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import (
@@ -6,6 +8,7 @@ from langchain_core.prompts import (
     MessagesPlaceholder,
 )
 from langchain_google_genai import ChatGoogleGenerativeAI
+from pydantic import BaseModel, Field
 
 from learning_companion.config import Settings
 
@@ -121,5 +124,73 @@ def build_study_helper_chain(settings: Settings):
     model = ChatGoogleGenerativeAI(
         model=settings.gemini_model_name,
         google_api_key=settings.gemini_api_key,
+    )
+    return prompt | model | StrOutputParser()
+
+
+REVIEW_RULES = {
+    "general": (
+        "Friendly, short, plain English. Answers what was asked. Does not force a study format. "
+        "Does not claim to browse, look things up, or be certainly correct."
+    ),
+    "study": (
+        "Has an Explanation (2-3 short sentences, plain English), an Example, and exactly one "
+        "Next step that is a statement, not a question. Concise. Does not claim to research or "
+        "retrieve information."
+    ),
+}
+
+REVIEWER_INSTRUCTION = (
+    "You review a draft answer from a Learning Companion chatbot against a short classroom rule. "
+    "Decide 'approve' if the draft follows the rule well enough, or 'improve' if it clearly "
+    "breaks the rule. Give one short plain-English sentence as the reason. Judge only; do not "
+    "rewrite the answer."
+)
+
+IMPROVER_INSTRUCTION = (
+    "You improve a draft answer from a Learning Companion chatbot. Rewrite the draft once to fix "
+    "the problem the reviewer stated, keeping what is already good. Follow the classroom rule. "
+    "Return only the improved answer. Do not add research, tools or new topics."
+)
+
+
+class Review(BaseModel):
+    decision: Literal["approve", "improve"]
+    reason: str = Field(description="One short plain-English sentence explaining the decision.")
+
+
+def _build_model(settings: Settings) -> ChatGoogleGenerativeAI:
+    if not settings.gemini_api_key:
+        raise ConfigurationError("GEMINI_API_KEY is not set. Add it to your untracked .env file.")
+    if not settings.gemini_model_name:
+        raise ConfigurationError("GEMINI_MODEL_NAME is not set. Ask your instructor for the name.")
+    return ChatGoogleGenerativeAI(
+        model=settings.gemini_model_name,
+        google_api_key=settings.gemini_api_key,
+    )
+
+
+def build_reviewer_chain(settings: Settings):
+    """Reviewer prompt -> Gemini with structured output -> Review. Inputs: rule, draft."""
+    model = _build_model(settings)
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            SystemMessage(content=REVIEWER_INSTRUCTION),
+            HumanMessagePromptTemplate.from_template("Rule:\n{rule}\n\nDraft answer:\n{draft}"),
+        ]
+    )
+    return prompt | model.with_structured_output(Review)
+
+
+def build_improver_chain(settings: Settings):
+    """Improver prompt -> Gemini -> text. Inputs: rule, draft, reason."""
+    model = _build_model(settings)
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            SystemMessage(content=IMPROVER_INSTRUCTION),
+            HumanMessagePromptTemplate.from_template(
+                "Rule:\n{rule}\n\nDraft answer:\n{draft}\n\nReviewer's reason:\n{reason}"
+            ),
+        ]
     )
     return prompt | model | StrOutputParser()
